@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
+from urllib.parse import urlparse
 
 from playwright.async_api import async_playwright, Page, TimeoutError as PlaywrightTimeoutError
 
@@ -30,6 +31,10 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Debug toggles for timeout diagnosis (keep temporary during investigation)
+DEBUG_DIAGNOSTICS = True
+DEBUG_OUTPUT_DIR = Path(OUTPUT_DIR) / 'debug'
 
 
 class AmazonScraper:
@@ -55,10 +60,18 @@ class AmazonScraper:
         # Ensure output directory exists
         Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
 
+        logger.info(
+            'Scraper domain config -> country=%s, default_country=%s, base_url=%s',
+            self.country,
+            DEFAULT_COUNTRY,
+            self.base_url
+        )
+
     async def _init_browser(self):
         """Initialize browser and page with random user agent."""
         playwright = await async_playwright().start()
-        browser = await playwright.chromium.launch(headless=self.headless)
+        effective_headless = False if DEBUG_DIAGNOSTICS else self.headless
+        browser = await playwright.chromium.launch(headless=effective_headless)
 
         user_agent = random.choice(USER_AGENTS)
         context = await browser.new_context(
@@ -69,32 +82,151 @@ class AmazonScraper:
         page = await context.new_page()
         page.set_default_timeout(REQUEST_TIMEOUT)
 
-        logger.info(f"Browser initialized with User-Agent: {user_agent[:50]}...")
+        logger.info(
+            f"Browser initialized with User-Agent: {user_agent[:50]}... "
+            f"(headless={effective_headless})"
+        )
         return playwright, browser, context, page
+
+    async def _save_debug_artifacts(
+        self,
+        page: Page,
+        page_number: int,
+        stage: str,
+        error_message: str = ""
+    ) -> None:
+        """Save URL/title/screenshot/HTML and anti-bot indicators for failed loads."""
+        DEBUG_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        base_name = f"page_{page_number}_{stage}_{timestamp}"
+        screenshot_path = DEBUG_OUTPUT_DIR / f"{base_name}.png"
+        html_path = DEBUG_OUTPUT_DIR / f"{base_name}.html"
+        info_path = DEBUG_OUTPUT_DIR / f"{base_name}.txt"
+
+        final_url = page.url
+        try:
+            title = await page.title()
+        except Exception:
+            title = "N/A"
+
+        try:
+            html = await page.content()
+        except Exception:
+            html = ""
+
+        anti_bot_phrases = [
+            "captcha",
+            "robot check",
+            "enter the characters",
+            "sorry, we just need to make sure you're not a robot"
+        ]
+        combined_text = f"{title}\n{html}".lower()
+        detected_phrases = [phrase for phrase in anti_bot_phrases if phrase in combined_text]
+
+        try:
+            await page.screenshot(path=str(screenshot_path), full_page=True)
+        except Exception as e:
+            logger.warning(f"Could not save screenshot for page {page_number}: {str(e)}")
+
+        try:
+            html_path.write_text(html, encoding="utf-8")
+        except Exception as e:
+            logger.warning(f"Could not save HTML for page {page_number}: {str(e)}")
+
+        debug_lines = [
+            f"stage: {stage}",
+            f"error: {error_message or 'N/A'}",
+            f"final_url: {final_url}",
+            f"page_title: {title}",
+            f"anti_bot_detected: {'yes' if detected_phrases else 'no'}",
+            f"anti_bot_matches: {', '.join(detected_phrases) if detected_phrases else 'none'}",
+            f"screenshot: {screenshot_path}",
+            f"html: {html_path}"
+        ]
+        info_path.write_text("\n".join(debug_lines), encoding="utf-8")
+
+        logger.error(f"Debug artifacts saved: {info_path}")
+        logger.error(f"Final URL: {final_url}")
+        logger.error(f"Page title: {title}")
+        if detected_phrases:
+            logger.error(f"Possible anti-bot page detected: {detected_phrases}")
 
     async def _navigate_to_search(self, page: Page, page_number: int = 1) -> bool:
         """Navigate to Amazon search results page."""
+        search_url = f"{self.base_url}/s?k={self.keyword.replace(' ', '+')}"
+        if page_number > 1:
+            search_url += f"&page={page_number}"
+
+        logger.info(f"Constructed search URL (before goto): {search_url}")
+
         try:
-            search_url = f"{self.base_url}/s?k={self.keyword.replace(' ', '+')}"
-            if page_number > 1:
-                search_url += f"&page={page_number}"
-            
-            logger.info(f"Navigating to: {search_url}")
-            await page.goto(search_url, wait_until='domcontentloaded', timeout=PAGE_LOAD_TIMEOUT)
-            
-            # Wait for search results container
-            await page.wait_for_selector('[data-component-type="s-search-result"]', timeout=REQUEST_TIMEOUT)
-            
-            # Random delay to mimic human behavior
-            await asyncio.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
-            
-            return True
-        except PlaywrightTimeoutError:
-            logger.error(f"Timeout while loading search page {page_number}")
+            response = await page.goto(search_url, wait_until='domcontentloaded', timeout=PAGE_LOAD_TIMEOUT)
+        except PlaywrightTimeoutError as e:
+            logger.error(f"Timeout during page.goto on page {page_number}: {str(e)}")
+            await self._save_debug_artifacts(page, page_number, "goto_timeout", str(e))
             return False
         except Exception as e:
-            logger.error(f"Error navigating to search page: {str(e)}")
+            logger.error(f"Error during page.goto on page {page_number}: {str(e)}")
+            await self._save_debug_artifacts(page, page_number, "goto_error", str(e))
             return False
+
+        final_url = page.url
+        final_title = await page.title()
+        logger.info(f"Final URL after goto: {final_url}")
+        logger.info(f"Page title after goto: {final_title}")
+
+        if response:
+            final_request = response.request
+            redirect_chain = [final_request.url]
+            previous_request = final_request.redirected_from
+            while previous_request:
+                redirect_chain.append(previous_request.url)
+                previous_request = previous_request.redirected_from
+            redirect_chain.reverse()
+
+            logger.info(
+                f"Navigation response -> status={response.status}, response_url={response.url}"
+            )
+            if len(redirect_chain) > 1:
+                logger.info(f"Redirect chain: {' -> '.join(redirect_chain)}")
+
+        expected_host = urlparse(search_url).netloc
+        final_host = urlparse(final_url).netloc
+        if expected_host and final_host and expected_host != final_host:
+            logger.warning(
+                f"Marketplace/domain redirect detected: expected_host={expected_host}, final_host={final_host}"
+            )
+
+        result_selectors = [
+            '[data-component-type="s-search-result"]',
+            'div.s-main-slot div[data-asin]',
+            '[data-asin]:has(h2)'
+        ]
+        per_selector_timeout = max(5000, REQUEST_TIMEOUT // len(result_selectors))
+
+        for selector in result_selectors:
+            try:
+                await page.wait_for_selector(
+                    selector,
+                    state="attached",
+                    timeout=per_selector_timeout
+                )
+                logger.info(f"Search results detected with selector: {selector}")
+
+                # Random delay to mimic human behavior
+                await asyncio.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
+                return True
+            except PlaywrightTimeoutError:
+                logger.warning(f"Selector timeout on page {page_number}: {selector}")
+
+        logger.error(f"Timeout waiting for search results on page {page_number}")
+        await self._save_debug_artifacts(
+            page,
+            page_number,
+            "results_selector_timeout",
+            "All search result selectors timed out"
+        )
+        return False
 
     async def _extract_product_data(self, page: Page) -> List[Dict]:
         """Extract product data from current search results page."""
@@ -385,3 +517,9 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+
+
+
+

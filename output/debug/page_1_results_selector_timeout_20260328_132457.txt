@@ -1,0 +1,8 @@
+stage: results_selector_timeout
+error: All search result selectors timed out
+final_url: https://www.amazon.sg/s?k=laptop&ref_=mr_direct_us_sg_sg&showmri
+page_title: Website Temporarily Unavailable
+anti_bot_detected: no
+anti_bot_matches: none
+screenshot: output\debug\page_1_results_selector_timeout_20260328_132457.png
+html: output\debug\page_1_results_selector_timeout_20260328_132457.html
