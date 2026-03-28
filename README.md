@@ -1,69 +1,94 @@
-# Amazon Search Scraper (Python + Playwright)
+# Amazon Scraper (Python + Playwright)
 
-A **production-ready Amazon search results scraper** built with **Python** and **Playwright**, specifically optimized for **freelance client delivery** and long-term maintenance.
+## Short Summary
 
-This project demonstrates a focus on **reliable, maintainable, and environment-compatible web automation solutions** for real-world business intelligence.
+A Python-based Amazon product scraper that extracts structured product data and prepares a clean client-ready dataset for product research and market analysis.
 
----
+## What This Scraper Does
 
-## 🎯 Why This Project Exists (Client Perspective)
+This project uses a Python + Playwright stack to collect product listings from Amazon search result pages. It captures key commercial fields (title, price, rating, reviews, product URL, and ad flag), then supports post-processing into delivery-ready files for client reporting.
 
-Most clients requiring Amazon data face several automation hurdles. This scraper is engineered to solve:
-* **JavaScript-Heavy Pages:** Uses Playwright to handle dynamic content that traditional scrapers miss.
-* **Regional Environment Differences:** Designed to run consistently across different locales and networks.
-* **Anti-Bot Friction:** Balances extraction depth with site-respecting delays to minimize blocks.
-* **Data Integrity:** Prioritizes **stability over brute-force speed** and **data correctness over speculative extraction.**
+## Key Features
 
----
+- Browser automation with Playwright for JavaScript-rendered pages
+- Structured extraction from Amazon search result listings
+- Pagination support for multi-page collection
+- CSV and JSON export support
+- Separate dataset cleanup flow in `prepare_client_dataset.py`
+- Output can be transformed into a client-ready CSV for delivery
 
-## ✨ Key Capabilities
+## Output Fields
 
-* **Dynamic Rendering:** Full support for JavaScript-rendered search results.
-* **Smart Ad Filtering:** Automatically identifies and labels **Sponsored/Ad** results to ensure organic data purity.
-* **Pagination Management:** Seamlessly crawls through multiple result pages.
-* **Dual-Format Export:** Generates clean, structured data in both **CSV** and **JSON**.
-* **Human-Centric Interaction:** Mimics real user behavior through viewport management and randomized timing.
+The scraper outputs these fields:
 
----
+- `title`
+- `asin`
+- `price`
+- `currency`
+- `rating`
+- `review_count`
+- `is_prime`
+- `is_sponsored`
+- `product_url`
 
-## 📊 Extracted Data Fields
+## Example Use Cases
 
-| Field | Description |
-| :--- | :--- |
-| `title` | Full product name as displayed on the search page |
-| `asin` | Amazon Standard Identification Number |
-| `price` | Current listed price (including currency symbol) |
-| `rating` | Star rating (e.g., 4.5) |
-| `review_count` | Total number of verified customer reviews |
-| `is_sponsored` | **Indicates whether the result is a paid advertisement** |
-| `is_prime` | Prime eligibility status |
-| `product_url` | Direct, cleaned link to the product detail page |
+- Product research for a niche or keyword segment
+- Competitor listing snapshots for pricing comparison
+- Sponsored vs non-sponsored result review
+- Weekly dataset refresh for marketplace monitoring
 
----
+## Project Structure
 
-## ⚙️ Environment & Stability Strategy
+```text
+amazon-scraper-portfolio/
+├── amazon_scraper.py
+├── prepare_client_dataset.py
+├── config.py
+├── requirements.txt
+├── README.md
+└── output/
+```
 
-To ensure **maximum installation stability** across diverse client environments (local machines, VPS, or Docker), this project is locked to:
-`playwright==1.40.0`
+## Setup
 
-**Engineering Rationale:**
-Newer versions of automation libraries can introduce breaking changes in browser binaries. By pinning **v1.40.0**, I ensure:
-1.  **Predictable Installation:** Zero-fail browser downloads in restricted environments.
-2.  **Stable Execution:** Proven compatibility with stable Chromium builds.
-3.  **Low Maintenance:** Easier client-side deployment without constant troubleshooting.
+1. Clone the repository:
 
----
-
-## 🚀 Installation & Usage
-
-### 1. Requirements
-* Python 3.10+
-* pip
-
-### 2. Setup
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+git clone https://github.com/Hy-Alex/amazon-scraper-portfolio.git
+cd amazon-scraper-portfolio
+```
 
-# Install the verified Chromium binary
+2. Create and activate a virtual environment.
+
+3. Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+4. Install Playwright browser binaries:
+
+```bash
 playwright install chromium
+```
+
+## How to Run
+
+Run the scraper:
+
+```bash
+python amazon_scraper.py
+```
+
+Prepare a cleaned client dataset:
+
+```bash
+python prepare_client_dataset.py
+```
+
+## Notes / Limitations
+
+- Amazon page structure can change over time, which may require selector updates.
+- Amazon may present anti-bot checks, CAPTCHAs, or region-based access differences depending on network conditions.
+- Results and availability can vary by locale, account state, and request timing.
